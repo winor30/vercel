@@ -86,17 +86,11 @@ import {
 import { ProjectEnvTarget, ProjectSettings, Project } from '../../types';
 
 import Client from '../../util/client';
-import getDecryptedEnvRecords, {
-  EmptyStringEnv,
-} from '../../util/get-decrypted-env-records';
+import getDecryptedEnvRecords from '../../util/get-decrypted-env-records';
 
 interface FSEvent {
   type: string;
   path: string;
-}
-
-interface Env {
-  [name: string]: string | undefined;
 }
 
 function sortBuilders(buildA: Builder, buildB: Builder) {
@@ -240,14 +234,6 @@ export default class DevServer {
     }
 
     const nowConfig = await this.getNowConfig(false);
-
-    // Update the env vars configuration
-    const [runEnv, buildEnv] = await Promise.all([
-      this.getLocalEnv('.env', nowConfig.env),
-      this.getLocalEnv('.env.build', nowConfig.build?.env),
-    ]);
-    const allEnv = { ...buildEnv, ...runEnv };
-    this.envConfigs = { buildEnv, runEnv, allEnv };
 
     // Update the build matches in case an entrypoint was created or deleted
     await this.updateBuildMatches(nowConfig);
@@ -653,6 +639,7 @@ export default class DevServer {
       this.getLocalEnv('.env', config.env),
       this.getLocalEnv('.env.build', configBuild.env),
     ]);
+
     let allEnv = { ...buildEnv, ...runEnv };
 
     // if local .env/.env.build don't exist, use cloud variables
@@ -669,11 +656,8 @@ export default class DevServer {
 
         if (decryptedEnvRecords) {
           allEnv = runEnv = buildEnv = decryptedEnvRecords;
-          config.env = configBuild.env = allEnv as EmptyStringEnv;
+          this.cachedEnvVars = decryptedEnvRecords;
         }
-
-        // cache in case client/project unavailable
-        this.cachedEnvVars = decryptedEnvRecords;
       }
     }
 
@@ -811,13 +795,6 @@ export default class DevServer {
       client,
       project || undefined
     );
-
-    const [runEnv, buildEnv] = await Promise.all([
-      this.getLocalEnv('.env', nowConfig.env),
-      this.getLocalEnv('.env.build', nowConfig.build?.env),
-    ]);
-    const allEnv = { ...buildEnv, ...runEnv };
-    this.envConfigs = { buildEnv, runEnv, allEnv };
 
     const opts = { output: this.output, isBuilds: true };
     const files = await getFiles(this.cwd, nowConfig, opts);

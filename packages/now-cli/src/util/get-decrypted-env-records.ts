@@ -4,16 +4,14 @@ import Client from './client';
 import { Output } from './output/create-output';
 import { ProjectEnvTarget, Project } from '../types';
 
-export interface EmptyStringEnv {
-  [name: string]: string;
-}
+import { Env } from '@vercel/build-utils';
 
 export default async function getDecryptedEnvRecords(
   output: Output,
   client: Client,
   project: null | Project,
   target: ProjectEnvTarget
-): Promise<EmptyStringEnv> {
+): Promise<Env> {
   if (!project) {
     return {};
   }
@@ -33,7 +31,7 @@ export default async function getDecryptedEnvRecords(
     })
   );
 
-  const results: EmptyStringEnv = {};
+  const results: Env = {};
   for (let i = 0; i < decryptedValues.length; i++) {
     const { key } = envs[i];
     const { value, found } = decryptedValues[i];

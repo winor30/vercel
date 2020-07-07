@@ -83,11 +83,20 @@ import {
   HttpHeadersConfig,
   EnvConfigs,
 } from './types';
-import { ProjectSettings } from '../../types';
+import { ProjectEnvTarget, ProjectSettings, Project } from '../../types';
+
+import Client from '../../util/client';
+import getDecryptedEnvRecords, {
+  EmptyStringEnv,
+} from '../../util/get-decrypted-env-records';
 
 interface FSEvent {
   type: string;
   path: string;
+}
+
+interface Env {
+  [name: string]: string | undefined;
 }
 
 function sortBuilders(buildA: Builder, buildB: Builder) {
@@ -138,6 +147,8 @@ export default class DevServer {
   private updateBuildersPromise: Promise<void> | null;
   private updateBuildersTimeout: NodeJS.Timeout | undefined;
 
+  private cachedEnvVars: Env | null;
+
   constructor(cwd: string, options: DevServerOptions) {
     this.cwd = cwd;
     this.debug = options.debug;
@@ -167,6 +178,8 @@ export default class DevServer {
     this.getNowConfigPromise = null;
     this.blockingBuildsPromise = null;
     this.updateBuildersPromise = null;
+
+    this.cachedEnvVars = null;
 
     this.watchAggregationId = null;
     this.watchAggregationEvents = [];
@@ -503,11 +516,15 @@ export default class DevServer {
     return {};
   }
 
-  async getNowConfig(canUseCache: boolean = true): Promise<NowConfig> {
+  async getNowConfig(
+    canUseCache: boolean = true,
+    client?: Client,
+    project?: Project
+  ): Promise<NowConfig> {
     if (this.getNowConfigPromise) {
       return this.getNowConfigPromise;
     }
-    this.getNowConfigPromise = this._getNowConfig(canUseCache);
+    this.getNowConfigPromise = this._getNowConfig(canUseCache, client, project);
     try {
       return await this.getNowConfigPromise;
     } finally {
@@ -515,7 +532,11 @@ export default class DevServer {
     }
   }
 
-  async _getNowConfig(canUseCache: boolean = true): Promise<NowConfig> {
+  async _getNowConfig(
+    canUseCache: boolean = true,
+    client?: Client,
+    project?: Project
+  ): Promise<NowConfig> {
     if (canUseCache && this.cachedNowConfig) {
       return this.cachedNowConfig;
     }
@@ -625,6 +646,39 @@ export default class DevServer {
     this.caseSensitive = hasNewRoutingProperties(config);
     this.apiDir = detectApiDirectory(config.builds || []);
     this.apiExtensions = detectApiExtensions(config.builds || []);
+
+    // Update the env vars configuration
+    const configBuild = config.build || {};
+    let [runEnv, buildEnv] = await Promise.all([
+      this.getLocalEnv('.env', config.env),
+      this.getLocalEnv('.env.build', configBuild.env),
+    ]);
+    let allEnv = { ...buildEnv, ...runEnv };
+
+    // if local .env/.env.build don't exist, use cloud variables
+    if (Object.keys(allEnv).length === 0) {
+      if (this.cachedEnvVars) {
+        allEnv = runEnv = buildEnv = this.cachedEnvVars;
+      } else if (client && project) {
+        const decryptedEnvRecords = await getDecryptedEnvRecords(
+          this.output,
+          client,
+          project,
+          ProjectEnvTarget.Development
+        );
+
+        if (decryptedEnvRecords) {
+          allEnv = runEnv = buildEnv = decryptedEnvRecords;
+          config.env = configBuild.env = allEnv as EmptyStringEnv;
+        }
+
+        // cache in case client/project unavailable
+        this.cachedEnvVars = decryptedEnvRecords;
+      }
+    }
+
+    this.envConfigs = { buildEnv, runEnv, allEnv };
+
     return config;
   }
 
@@ -735,7 +789,11 @@ export default class DevServer {
   /**
    * Launches the `vercel dev` server.
    */
-  async start(...listenSpec: ListenSpec): Promise<void> {
+  async start(
+    client: Client,
+    project: Project | undefined,
+    ...listenSpec: ListenSpec
+  ): Promise<void> {
     if (!fs.existsSync(this.cwd)) {
       throw new Error(`${chalk.bold(this.cwd)} doesn't exist`);
     }
@@ -748,7 +806,12 @@ export default class DevServer {
     this.filter = ig.createFilter();
 
     // Retrieve the path of the native module
-    const nowConfig = await this.getNowConfig(false);
+    const nowConfig = await this.getNowConfig(
+      false,
+      client,
+      project || undefined
+    );
+
     const [runEnv, buildEnv] = await Promise.all([
       this.getLocalEnv('.env', nowConfig.env),
       this.getLocalEnv('.env.build', nowConfig.build?.env),

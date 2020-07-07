@@ -63,7 +63,7 @@ export default async function dev(
     if (project.devCommand) {
       devCommand = project.devCommand;
     } else if (project.framework) {
-      const framework = frameworks.find(f => f.slug === project.framework);
+      const framework = frameworks.find((f) => f.slug === project.framework);
 
       if (framework) {
         if (framework.slug) {
@@ -93,5 +93,5 @@ export default async function dev(
   process.once('SIGINT', () => devServer.stop());
   process.once('SIGTERM', () => devServer.stop());
 
-  await devServer.start(...listen);
+  await devServer.start(client, link.project, ...listen);
 }
